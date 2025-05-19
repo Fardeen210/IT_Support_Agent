@@ -9,6 +9,10 @@ from app.workflows.coordinator_graph import build_coordinator_graph, approval_pa
 from uuid import uuid4
 from typing import Dict, Any
 
+from IPython.display import Image, display
+from langchain_core.runnables.graph import CurveStyle, MermaidDrawMethod, NodeStyles
+
+
 router = APIRouter()
 TASKS: Dict[str, Dict[str, Any]] = {}
 PLANS: Dict[str, Dict[str, Any]] = {}
@@ -18,6 +22,8 @@ PLANS: Dict[str, Dict[str, Any]] = {}
 async def execute(request: ExecuteRequest):
     task_id = str(uuid4())
     graph = build_coordinator_graph()
+    save_mermaid_diagram(graph)
+
     context = {
         "task_id": task_id,
         "request": request.request,
@@ -58,9 +64,13 @@ async def approve_plan(id: str):
     context = PLANS[id]
     context["status"] = "active"
     graph = build_coordinator_graph()
+
+   
+
     # Resume from approval node
     print("DEBUG: Approving plan. Context keys:", context.keys())
     print("DEBUG: Plan in context:", context.get("plan"))
+
     updated_result_state = graph.invoke(None, config={"configurable": {"thread_id": id}})
     TASKS[id] = {
         "status": updated_result_state["status"],
@@ -97,3 +107,19 @@ async def get_task_status(id: str):
         email_draft=email_draft,
         duration_seconds=duration_seconds
     )
+    
+def save_mermaid_diagram(graph, base_filename="workflow"):
+    """
+    Saves the Mermaid diagram of the given LangGraph graph as both PNG and Markdown files.
+    
+    Args:
+        graph: The LangGraph graph object
+        base_filename: Base name for the output files (without extension)
+    """
+    # Save PNG version
+    png_data = graph.get_graph().draw_mermaid_png()
+    
+    png_filename = f"{base_filename}.png"
+    with open(png_filename, "wb") as f:
+        f.write(png_data)
+    print(f"Saved PNG diagram to {png_filename}")

@@ -1,12 +1,22 @@
-from langgraph.graph import StateGraph, START, END
-from typing import Dict, Any
+from langgraph.graph import StateGraph, START, END 
+from typing import Dict, Any, Literal, TypedDict, Optional
 from langgraph.checkpoint.memory import MemorySaver
 
 from app.agents import AGENT_REGISTRY
 
 # --- NODE FUNCTIONS ---
+class CoordinatorState(TypedDict):
+    request: str
+    require_approval: Optional[bool]
+    plan: dict
+    status: str
+    results: dict
+    error: Optional[str]
+    retry_count: int
 
 checkpointer = MemorySaver()
+
+
 
 def plan_node(state: Dict[str, Any]) -> Dict[str, Any]:
     coordinator = AGENT_REGISTRY["coordinator"]
@@ -29,6 +39,11 @@ def approval_pause_node(state: Dict[str, Any]) -> Dict[str, Any]:
     Pauses for external approval. No-op until /approve is called.
     """
     return state
+
+def after_approval_pause_edge(state: Dict[str, Any]) -> Literal["run_agents_node", "merge_results_node"]:
+    if state.get("status") == "rejected":
+        return "merge_results_node"
+    return "run_agents_node"
 
 def run_agents_node(state: Dict[str, Any], config=None) -> Dict[str, Any]:
     plan = state.get("plan", {})
@@ -71,17 +86,12 @@ def merge_results_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
 # --- CONDITIONAL EDGE FUNCTIONS ---
 
-def after_plan_edge(state: Dict[str, Any], config=None):
-    """
-    Go to approval_pause if waiting approval, otherwise run_agents.
-    """
-    return "approval_pause_node" if state["status"] == "waiting_approval" else "run_agents_node"
+def after_plan_edge(state: Dict[str, Any]) -> Literal["approval_pause_node", "run_agents_node"]:
+    if state["status"] == "waiting_approval":
+        return "approval_pause_node"
+    return "run_agents_node"
 
-def after_run_agents_edge(state: Dict[str, Any], config=None):
-    """
-    Retry run_agents if AutomationAgent failed and retry not exceeded.
-    Go to merge_results on normal completion, or END if failed.
-    """
+def after_run_agents_edge(state: Dict[str, Any]) -> Literal["run_agents_node", "merge_results_node"]:
     if state.get("status") == "failed":
         return END
     if state.get("error") and "AutomationAgent" in str(state.get("error")) and state.get("retry_count", 0) < 2:
@@ -91,27 +101,22 @@ def after_run_agents_edge(state: Dict[str, Any], config=None):
 # --- GRAPH BUILDER ---
 
 def build_coordinator_graph():
-    builder = StateGraph(dict)
+    builder = StateGraph(CoordinatorState)
 
     # Add nodes
     builder.add_node(plan_node)
     builder.add_node(approval_pause_node)
-    builder.add_node(run_agents_node)
+    builder.add_node(run_agents_node)  
     builder.add_node(merge_results_node)
+
 
     # Entry
     builder.add_edge(START, "plan_node")
-
-    # Conditional edge: plan_node → approval_pause_node OR run_agents_node
-    builder.add_conditional_edges("plan_node", path=after_plan_edge)
-
-    # approval_pause_node always resumes to run_agents_node (after approval via API)
     builder.add_edge("approval_pause_node", "run_agents_node")
-
-    # Conditional edge: run_agents_node → run_agents_node (retry), merge_results_node, or END
-    builder.add_conditional_edges("run_agents_node", path=after_run_agents_edge)
-
-    # merge_results_node always to END
+    
+    builder.add_conditional_edges("plan_node", after_plan_edge) 
+    builder.add_conditional_edges("approval_pause_node", after_approval_pause_edge)
+    builder.add_conditional_edges("run_agents_node", after_run_agents_edge)
     builder.add_edge("merge_results_node", END)
 
     return builder.compile(
@@ -120,7 +125,13 @@ def build_coordinator_graph():
     )
 
 if __name__ == "__main__":
-    context = {"request": "...", "require_approval": True}
     graph = build_coordinator_graph()
-    result = graph.invoke(context)
-    print("FINAL:", result)
+    g = graph.get_graph().draw_mermaid_png()
+
+    base_filename = "coordinator_graph"
+
+    png_filename = f"{base_filename}.png"
+    
+    with open(png_filename, "wb") as f:
+        f.write(g)
+    print(f"Saved PNG diagram to {png_filename}")

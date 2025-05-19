@@ -41,11 +41,10 @@ def test_approval_flow():
     # Approve the plan
     approve = client.post(f"/api/v1/plans/{task_id}/approve")
     assert approve.status_code == 200
-    # Now check the task status: should be completed
+    # Now checkinge task status: should be completed
     task = get_task(task_id)
     assert task["status"] == "completed"
-    # There should be a script or commands in the final output
-    result = task.get("result", task)  # fallback to whole dict if needed
+    result = task.get("result", task) 
     assert result.get("script") or result.get("commands")
 
 @pytest.mark.timeout(10)
@@ -72,7 +71,7 @@ def test_agent_retry(monkeypatch):
     resp = r.json()
     # Clean up the patch
     AGENT_REGISTRY["automation"] = original
-    # If retry succeeded, status is completed and script is present
+    # If retry succeededing, us is completed and script is present
     assert resp["status"] in ["completed", "failed"]
     if resp["status"] == "completed":
         result = resp.get("result", {})
@@ -89,7 +88,6 @@ def test_script_compiles():
     resp = r.json()
     result = resp.get("result", {})
     script = result.get("script", {})
-    # Accept either {'code': "..."} or just a string script
     code = ""
     if isinstance(script, dict):
         code = script.get("code") or script.get("sample_code") or ""
@@ -99,7 +97,7 @@ def test_script_compiles():
     # If powershell, test syntax using pwsh
     if script.get("language", "").lower() == "powershell":
         check = subprocess.run(["pwsh", "-Command", code], capture_output=True, text=True)
-        # Accept both success or expected runtime errors (because no context)
+
         assert check.returncode == 0 or check.stderr
     elif script.get("language", "").lower() == "bash":
         with open("test_script.sh", "w") as f:
